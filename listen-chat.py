@@ -19,6 +19,7 @@ async def listen_chat(host: str, port: int, history_file: str):
             print(logged_message.rstrip())
 
     writer.close()
+    await writer.wait_closed()
 
 
 if __name__ == '__main__':
@@ -32,13 +33,13 @@ if __name__ == '__main__':
         '--host',
         type=str,
         default=env.str('HOST', 'minechat.dvmn.org'),
-        help='Chat host to listen to',
+        help='Chat host',
     )
     parser.add_argument(
         '--port',
         type=int,
-        default=env.int('PORT', 5000),
-        help='Chat port',
+        default=env.int('LISTEN_PORT', 5000),
+        help='Chat port to listen to',
     )
     parser.add_argument(
         '--history',
