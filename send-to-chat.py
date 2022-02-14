@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import json
 import logging
 
 from environs import Env
@@ -14,9 +15,13 @@ async def send_to_chat(host: str, port: int, token: str, message: str):
     logger.debug(f'receiver:{token}')
     await writer.drain()
 
-    for _ in range(2):
-        received_message = await reader.readline()
-        logger.debug(f'sender:{received_message.decode().rstrip()}')
+    received_message = await reader.readline()
+    is_token_valid = json.loads(received_message.decode().rstrip()) is not None
+    if not is_token_valid:
+        logger.debug(f'sender:Invalid token. Check it or register a new user.')
+
+    received_message = await reader.readline()
+    logger.debug(f'sender:{received_message.decode().rstrip()}')
 
     writer.write(f'{message}\n\n'.encode())
     logger.debug(f'receiver:{message}')
