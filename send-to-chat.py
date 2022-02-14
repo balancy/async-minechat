@@ -1,27 +1,39 @@
 import argparse
 import asyncio
+import logging
 
 from environs import Env
 
 async def send_to_chat(host: str, port: int, token: str, message: str):
     reader, writer = await asyncio.open_connection(host, port)
 
-    await reader.readline()
+    received_message = await reader.readline()
+    logger.debug(f'sender:{received_message.decode().rstrip()}')
 
     writer.write(f'{token}\n'.encode())
+    logger.debug(f'receiver:{token}')
     await writer.drain()
 
     for _ in range(2):
-        await reader.readline()
+        received_message = await reader.readline()
+        logger.debug(f'sender:{received_message.decode().rstrip()}')
 
     writer.write(f'{message}\n\n'.encode())
+    logger.debug(f'receiver:{message}')
     await writer.drain()
 
     writer.close()
+    logger.debug('receiver:close connection')
     await writer.wait_closed()
 
 
 if __name__ == '__main__':
+    logging.basicConfig(
+        format = u'%(levelname)s:%(message)s',
+        level = logging.DEBUG,
+    )
+    logger = logging.getLogger(__name__)
+
     env = Env()
     env.read_env()
 
