@@ -95,10 +95,8 @@ if __name__ == '__main__':
     env = Env()
     env.read_env()
 
-    args = read_cli_arguments(*read_env_variables(env))
-
-    asyncio.run(
-        send_message_to_chat(
-            args.host, args.port, args.token, args.username, args.message
-        )
+    host, port, token, username, message = read_cli_arguments(
+        *read_env_variables(env)
     )
+
+    asyncio.run(send_message_to_chat(host, port, token, username, message))

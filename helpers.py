@@ -71,7 +71,13 @@ def read_cli_arguments(
     )
     args = parser.parse_args()
 
-    return args
+    return (
+        args.host,
+        args.port,
+        args.token,
+        args.username.rstrip(),
+        args.message.rstrip(),
+    )
 
 
 class InvalidToken(Exception):
