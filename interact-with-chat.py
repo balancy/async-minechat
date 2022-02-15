@@ -1,10 +1,28 @@
+import argparse
 import asyncio
 import json
 import logging
+import os
 
+import aiofiles
 from environs import Env
 
-from helpers import InvalidToken, read_cli_arguments, read_env_variables
+
+TOKEN_FILE = 'token.json'
+
+
+class InvalidToken(Exception):
+    pass
+
+
+async def get_token_from_file():
+    if not os.path.exists(TOKEN_FILE):
+        return
+
+    async with aiofiles.open(TOKEN_FILE, 'r') as file:
+        contents = await file.read()
+        username_with_token = json.loads(contents)
+        return username_with_token.get('account_hash')
 
 
 async def register_user(
@@ -24,8 +42,8 @@ async def register_user(
 
     username_with_token = json.loads(received_message.decode())
 
-    with open('token.json', 'w') as outfile:
-        json.dump(username_with_token, outfile)
+    async with aiofiles.open(TOKEN_FILE, 'w') as outfile:
+        await outfile.write(json.dumps(username_with_token))
 
     received_message = await reader.readline()
     logger.debug(f'sender:{received_message.decode().rstrip()}')
@@ -85,6 +103,57 @@ async def send_message_to_chat(
     await writer.wait_closed()
 
 
+async def main(env: Env):
+    if not (token := await get_token_from_file()):
+        token = env.str('TOKEN', 'random_token')
+
+    host = env.str('HOST', 'minechat.dvmn.org')
+    port = env.int('WRITE_PORT', 5050)
+    username = env.str('USERNAME', 'funky')
+
+    parser = argparse.ArgumentParser(
+        description=(
+            'Define message to send to the chat and optional arguments like '
+            'host, port, token, username if needed.'
+        )
+    )
+    parser.add_argument(
+        '--message',
+        required=True,
+        type=str,
+        help='Message to send to the chat',
+    )
+    parser.add_argument(
+        '--host',
+        type=str,
+        default=host,
+        help='Chat host',
+    )
+    parser.add_argument(
+        '--port',
+        type=int,
+        default=port,
+        help='Chat port to write to',
+    )
+    parser.add_argument(
+        '--token',
+        type=str,
+        default=token,
+        help='Token to authenticate the user',
+    )
+    parser.add_argument(
+        '--username',
+        type=str,
+        default=username,
+        help='Username to use in the chat',
+    )
+    args = parser.parse_args()
+
+    await send_message_to_chat(
+        args.host, args.port, args.token, args.username, args.message
+    )
+
+
 if __name__ == '__main__':
     logging.basicConfig(
         format = u'%(levelname)s:%(message)s',
@@ -95,8 +164,4 @@ if __name__ == '__main__':
     env = Env()
     env.read_env()
 
-    host, port, token, username, message = read_cli_arguments(
-        *read_env_variables(env)
-    )
-
-    asyncio.run(send_message_to_chat(host, port, token, username, message))
+    asyncio.run(main(env))
