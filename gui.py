@@ -109,7 +109,7 @@ def create_status_panel(root_frame):
 async def draw(messages_queue, sending_queue, status_updates_queue):
     root = tkinter.Tk()
 
-    root.title('Чат Майнкрафтера')
+    root.title('Minechat')
 
     root_frame = tkinter.Frame()
     root_frame.pack(fill="both", expand=True)
@@ -141,5 +141,5 @@ async def draw(messages_queue, sending_queue, status_updates_queue):
     await asyncio.gather(
         update_tk(root_frame),
         update_conversation_history(conversation_panel, messages_queue),
-        update_status_panel(status_labels, status_updates_queue)
+        update_status_panel(status_labels, status_updates_queue),
     )

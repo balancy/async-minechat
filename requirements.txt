@@ -1,0 +1,2 @@
+aiofile==3.7.4
+environs==9.5.0

@@ -1,5 +1,5 @@
-*.txt
 *.history
 .*
 *.json
 __pycache__
+venv
