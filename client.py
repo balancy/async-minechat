@@ -28,6 +28,12 @@ async def save_messages(filepath, queue):
             await outfile.write(f'{message}\n')
 
 
+async def read_messages_from_file(filepath, queue):
+    async with AIOFile(filepath, 'r') as file:
+        contents = await file.read()
+        queue.put_nowait(contents.rstrip())
+
+
 async def main(
     messages_queue,
     sending_queue,
@@ -37,6 +43,8 @@ async def main(
     port,
     history_file,
 ):
+    await read_messages_from_file(args.history, messages_queue)
+
     await asyncio.gather(
         read_messages(host, port, messages_queue, saving_queue),
         save_messages(history_file, saving_queue),
