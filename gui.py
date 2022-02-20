@@ -8,7 +8,7 @@ class TkAppClosed(Exception):
     pass
 
 
-class ReadConnectionStateChanged(Enum):
+class ReadingConnectionState(Enum):
     INITIATED = 'устанавливаем соединение'
     ESTABLISHED = 'соединение установлено'
     CLOSED = 'соединение закрыто'
@@ -17,7 +17,7 @@ class ReadConnectionStateChanged(Enum):
         return str(self.value)
 
 
-class SendingConnectionStateChanged(Enum):
+class SendingConnectionState(Enum):
     INITIATED = 'устанавливаем соединение'
     ESTABLISHED = 'соединение установлено'
     CLOSED = 'соединение закрыто'
@@ -71,10 +71,10 @@ async def update_status_panel(status_labels, status_updates_queue):
 
     while True:
         msg = await status_updates_queue.get()
-        if isinstance(msg, ReadConnectionStateChanged):
+        if isinstance(msg, ReadingConnectionState):
             read_label['text'] = f'Чтение: {msg}'
 
-        if isinstance(msg, SendingConnectionStateChanged):
+        if isinstance(msg, SendingConnectionState):
             write_label['text'] = f'Отправка: {msg}'
 
         if isinstance(msg, NicknameReceived):
