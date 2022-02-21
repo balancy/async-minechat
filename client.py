@@ -3,8 +3,9 @@ import asyncio
 from datetime import datetime
 import json
 import logging
+from socket import gaierror
 import sys
-from time import time
+from time import sleep, time
 
 from anyio import create_task_group
 
@@ -25,8 +26,32 @@ from work_with_files import (
 )
 
 
+DOWNTIME = 5
+MAX_RECONNECTS_AMOUNT = 3
+TIMEOUT_LIMIT = 1
+
+
 class InvalidToken(Exception):
     pass
+
+
+class ReconnectsCount:
+    def __init__(self, max_reconnects, downtime):
+        self.count = 0
+        self.max_reconnects = max_reconnects
+        self.downtime = downtime
+
+    def reset(self):
+        self.count = 0
+
+    def increment(self):
+        self.count += 1
+
+    def overpassed_max_reconnects_amount(self):
+        return self.count >= self.max_reconnects
+
+    def get_idle_time(self):
+        return (self.count - self.max_reconnects) * self.downtime
 
 
 async def authenticate_user(
@@ -69,6 +94,8 @@ async def handle_connection(
     watchdog_queue,
     status_queue,
 ):
+    reconnects_count = ReconnectsCount(MAX_RECONNECTS_AMOUNT, DOWNTIME)
+
     while True:
         try:
             async with create_task_group() as tg:
@@ -87,10 +114,21 @@ async def handle_connection(
                     watchdog_queue,
                     status_queue,
                 )
-                tg.start_soon(watch_for_connection, watchdog_queue)
+                tg.start_soon(
+                    watch_for_connection, watchdog_queue, reconnects_count
+                )
         except ConnectionError:
+            reconnects_count.increment()
             status_queue.put_nowait(ReadingConnectionState.CLOSED)
-            # status_queue.put_nowait(SendingConnectionState.CLOSED)
+            status_queue.put_nowait(SendingConnectionState.CLOSED)
+
+            if reconnects_count.overpassed_max_reconnects_amount():
+                tg.cancel_scope.cancel()
+                time_to_sleep = reconnects_count.get_idle_time()
+                logger.debug(
+                    f'[{int(time())}] Waiting for {time_to_sleep} seconds.'
+                )
+                sleep(time_to_sleep)
 
 
 async def initalize_arguments(env: Env) -> argparse.Namespace:
@@ -149,7 +187,14 @@ async def main(
     status_queue.put_nowait(ReadingConnectionState.INITIATED)
     status_queue.put_nowait(SendingConnectionState.INITIATED)
 
-    reading_connection = await asyncio.open_connection(args.host, args.rport)
+    try:
+        reading_connection = await asyncio.open_connection(
+            args.host, args.rport
+        )
+    except gaierror:
+        logger.debug(f'Could not resolve {args.host}')
+        sys.exit(1)
+
     sending_connection = await asyncio.open_connection(args.host, args.wport)
 
     try:
@@ -187,8 +232,8 @@ async def read_messages(
 
     while not reader.at_eof():
         chat_message = await reader.readline()
-        status_queue.put_nowait(ReadingConnectionState.ESTABLISHED)
 
+        status_queue.put_nowait(ReadingConnectionState.ESTABLISHED)
         watchdog_queue.put_nowait('Connection is alive. New message in chat.')
 
         current_time = datetime.now().strftime('[%m.%d.%Y %H:%M]')
@@ -205,32 +250,30 @@ async def send_messages(
     status_queue: asyncio.queues.Queue,
 ):
     _, writer = connection
+    status_queue.put_nowait(SendingConnectionState.INITIATED)
 
     while True:
         message = await sending_queue.get()
+        status_queue.put_nowait(SendingConnectionState.ESTABLISHED)
         watchdog_queue.put_nowait('Connection is alive. Message sent.')
 
         writer.write(f'{message}\n\n'.encode())
         await writer.drain()
-        status_queue.put_nowait(SendingConnectionState.ESTABLISHED)
 
 
-async def watch_for_connection(queue):
-    # timeouts_amount = 0
-
+async def watch_for_connection(queue, reconnects_count):
     while True:
-        try:
-            async with timeout(1):
-                message = await queue.get()
-            watchdog_logger.debug(f'[{int(time())}] {message}')
-            # timeouts_amount = 0
-        except asyncio.exceptions.TimeoutError:
-            # timeouts_amount += 1
-            watchdog_logger.debug(f'[{int(time())}] 1s timeout is elapsed.')
-            raise ConnectionError
-        # finally:
-        #     pass
+        timestamp = f'[{int(time())}]'
 
+        try:
+            async with timeout(TIMEOUT_LIMIT):
+                message = await queue.get()
+            reconnects_count.reset()
+            logger.debug(f'{timestamp} {message}')
+
+        except asyncio.exceptions.TimeoutError:
+            logger.debug(f'{timestamp} {TIMEOUT_LIMIT} timeout is elapsed.')
+            raise ConnectionError
 
 
 if __name__ == '__main__':
@@ -238,7 +281,7 @@ if __name__ == '__main__':
         format=u'%(levelname)s:%(message)s',
         level=logging.DEBUG,
     )
-    watchdog_logger = logging.getLogger(__name__)
+    logger = logging.getLogger(__name__)
 
     env = Env()
     env.read_env()
