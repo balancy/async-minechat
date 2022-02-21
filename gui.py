@@ -1,7 +1,10 @@
 import asyncio
 from enum import Enum
+import sys
 import tkinter
 from tkinter.scrolledtext import ScrolledText
+
+from anyio import create_task_group
 
 
 class TkAppClosed(Exception):
@@ -43,7 +46,7 @@ async def update_tk(root_frame, interval=1 / 120):
             root_frame.update()
         except tkinter.TclError:
             # if application has been destroyed/closed
-            raise TkAppClosed()
+            sys.exit(0)
         await asyncio.sleep(interval)
 
 
@@ -138,8 +141,11 @@ async def draw(messages_queue, sending_queue, status_updates_queue):
     conversation_panel = ScrolledText(root_frame, wrap='none')
     conversation_panel.pack(side="top", fill="both", expand=True)
 
-    await asyncio.gather(
-        update_tk(root_frame),
-        update_conversation_history(conversation_panel, messages_queue),
-        update_status_panel(status_labels, status_updates_queue),
-    )
+    async with create_task_group() as tg:
+        tg.start_soon(update_tk, root_frame)
+        tg.start_soon(
+            update_conversation_history, conversation_panel, messages_queue
+        )
+        tg.start_soon(
+            update_status_panel, status_labels, status_updates_queue
+        )

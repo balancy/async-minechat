@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+from dataclasses import dataclass, field
 from datetime import datetime
 import json
 import logging
@@ -7,8 +8,7 @@ from socket import gaierror
 import sys
 from time import sleep, time
 
-from anyio import create_task_group
-
+from anyio import ExceptionGroup, create_task_group
 from async_timeout import timeout
 from environs import Env
 from tkinter import messagebox
@@ -18,6 +18,7 @@ from gui import (
     NicknameReceived,
     ReadingConnectionState,
     SendingConnectionState,
+    TkAppClosed,
 )
 from work_with_files import (
     get_token_from_file,
@@ -26,9 +27,18 @@ from work_with_files import (
 )
 
 
-DOWNTIME = 5
+DOWNTIME = 60
 MAX_RECONNECTS_AMOUNT = 3
-TIMEOUT_LIMIT = 1
+TIMEOUT_LIMIT = 3
+
+
+@dataclass
+class Queues:
+    messages_queue: asyncio.queues.Queue = field(default=asyncio.Queue())
+    saving_queue: asyncio.queues.Queue = field(default=asyncio.Queue())
+    sending_queue: asyncio.queues.Queue = field(default=asyncio.Queue())
+    status_queue: asyncio.queues.Queue = field(default=asyncio.Queue())
+    watchdog_queue: asyncio.queues.Queue = field(default=asyncio.Queue())
 
 
 class InvalidToken(Exception):
@@ -54,11 +64,7 @@ class ReconnectsCount:
         return (self.count - self.max_reconnects) * self.downtime
 
 
-async def authenticate_user(
-    connection: tuple[asyncio.StreamReader, asyncio.StreamWriter],
-    auth_token: str,
-    watchdog_queue: asyncio.queues.Queue,
-) -> str:
+async def authenticate_user(connection, auth_token, watchdog_queue):
     reader, writer = connection
 
     received_message = await reader.readline()
@@ -86,14 +92,7 @@ async def authenticate_user(
     return username
 
 
-async def handle_connection(
-    reading_connection,
-    sending_connection,
-    messages_queue,
-    saving_queue,
-    watchdog_queue,
-    status_queue,
-):
+async def handle_connection(reading_connection, sending_connection, queues):
     reconnects_count = ReconnectsCount(MAX_RECONNECTS_AMOUNT, DOWNTIME)
 
     while True:
@@ -102,25 +101,22 @@ async def handle_connection(
                 tg.start_soon(
                     read_messages,
                     reading_connection,
-                    messages_queue,
-                    saving_queue,
-                    watchdog_queue,
-                    status_queue,
+                    queues,
                 )
                 tg.start_soon(
                     send_messages,
                     sending_connection,
-                    sending_queue,
-                    watchdog_queue,
-                    status_queue,
+                    queues,
                 )
                 tg.start_soon(
-                    watch_for_connection, watchdog_queue, reconnects_count
+                    watch_for_connection,
+                    queues.watchdog_queue,
+                    reconnects_count,
                 )
         except ConnectionError:
             reconnects_count.increment()
-            status_queue.put_nowait(ReadingConnectionState.CLOSED)
-            status_queue.put_nowait(SendingConnectionState.CLOSED)
+            queues.status_queue.put_nowait(ReadingConnectionState.CLOSED)
+            queues.status_queue.put_nowait(SendingConnectionState.CLOSED)
 
             if reconnects_count.overpassed_max_reconnects_amount():
                 tg.cancel_scope.cancel()
@@ -131,7 +127,7 @@ async def handle_connection(
                 sleep(time_to_sleep)
 
 
-async def initalize_arguments(env: Env) -> argparse.Namespace:
+async def initalize_arguments(env):
     if not (token := await get_token_from_file()):
         token = env.str('TOKEN', 'random_token')
 
@@ -173,19 +169,14 @@ async def initalize_arguments(env: Env) -> argparse.Namespace:
     return args
 
 
-async def main(
-    env: Env,
-    messages_queue: asyncio.queues.Queue,
-    saving_queue: asyncio.queues.Queue,
-    sending_queue: asyncio.queues.Queue,
-    status_queue: asyncio.queues.Queue,
-    watchdog_queue: asyncio.queues.Queue,
-):
+async def main(env):
     args = await initalize_arguments(env)
-    await upload_history_from_file(args.history, messages_queue)
+    queues = Queues()
 
-    status_queue.put_nowait(ReadingConnectionState.INITIATED)
-    status_queue.put_nowait(SendingConnectionState.INITIATED)
+    await upload_history_from_file(args.history, queues.messages_queue)
+
+    queues.status_queue.put_nowait(ReadingConnectionState.INITIATED)
+    queues.status_queue.put_nowait(SendingConnectionState.INITIATED)
 
     try:
         reading_connection = await asyncio.open_connection(
@@ -201,9 +192,9 @@ async def main(
         username = await authenticate_user(
             sending_connection,
             args.token,
-            watchdog_queue,
+            queues.watchdog_queue,
         )
-        status_queue.put_nowait(NicknameReceived(username))
+        queues.status_queue.put_nowait(NicknameReceived(username))
     except InvalidToken:
         sys.exit(1)
 
@@ -212,62 +203,55 @@ async def main(
             handle_connection,
             reading_connection,
             sending_connection,
-            messages_queue,
-            saving_queue,
-            watchdog_queue,
-            status_queue,
+            queues,
         )
-        tg.start_soon(save_history_to_file, args.history, saving_queue)
-        tg.start_soon(draw, messages_queue, sending_queue, status_queue)
+        tg.start_soon(save_history_to_file, args.history, queues.saving_queue)
+        tg.start_soon(
+            draw,
+            queues.messages_queue,
+            queues.sending_queue,
+            queues.status_queue,
+        )
 
 
-async def read_messages(
-    connection: tuple[asyncio.StreamReader, asyncio.StreamWriter],
-    messages_queue: asyncio.queues.Queue,
-    saving_queue: asyncio.queues.Queue,
-    watchdog_queue: asyncio.queues.Queue,
-    status_queue: asyncio.queues.Queue,
-):
+async def read_messages(connection, queues):
     reader, _ = connection
 
     while not reader.at_eof():
         chat_message = await reader.readline()
 
-        status_queue.put_nowait(ReadingConnectionState.ESTABLISHED)
-        watchdog_queue.put_nowait('Connection is alive. New message in chat.')
+        queues.status_queue.put_nowait(ReadingConnectionState.ESTABLISHED)
+        queues.watchdog_queue.put_nowait(
+            'Connection is alive. New message in chat.'
+        )
 
         current_time = datetime.now().strftime('[%m.%d.%Y %H:%M]')
         formatted_message = f'{current_time} {chat_message.decode().rstrip()}'
 
-        for queue in [messages_queue, saving_queue]:
+        for queue in [queues.messages_queue, queues.saving_queue]:
             queue.put_nowait(formatted_message)
 
 
-async def send_messages(
-    connection: tuple[asyncio.StreamReader, asyncio.StreamWriter],
-    sending_queue: asyncio.queues.Queue,
-    watchdog_queue: asyncio.queues.Queue,
-    status_queue: asyncio.queues.Queue,
-):
+async def send_messages(connection, queues):
     _, writer = connection
-    status_queue.put_nowait(SendingConnectionState.INITIATED)
+    queues.status_queue.put_nowait(SendingConnectionState.INITIATED)
 
     while True:
-        message = await sending_queue.get()
-        status_queue.put_nowait(SendingConnectionState.ESTABLISHED)
-        watchdog_queue.put_nowait('Connection is alive. Message sent.')
+        message = await queues.sending_queue.get()
+        queues.status_queue.put_nowait(SendingConnectionState.ESTABLISHED)
+        queues.watchdog_queue.put_nowait('Connection is alive. Message sent.')
 
         writer.write(f'{message}\n\n'.encode())
         await writer.drain()
 
 
-async def watch_for_connection(queue, reconnects_count):
+async def watch_for_connection(watchdog_queue, reconnects_count):
     while True:
         timestamp = f'[{int(time())}]'
 
         try:
             async with timeout(TIMEOUT_LIMIT):
-                message = await queue.get()
+                message = await watchdog_queue.get()
             reconnects_count.reset()
             logger.debug(f'{timestamp} {message}')
 
@@ -286,20 +270,9 @@ if __name__ == '__main__':
     env = Env()
     env.read_env()
 
-    messages_queue = asyncio.Queue()
-    saving_queue = asyncio.Queue()
-    sending_queue = asyncio.Queue()
-    status_queue = asyncio.Queue()
-    watchdog_queue = asyncio.Queue()
-
     loop = asyncio.get_event_loop()
-    loop.run_until_complete(
-        main(
-            env,
-            messages_queue,
-            saving_queue,
-            sending_queue,
-            status_queue,
-            watchdog_queue,
-        )
-    )
+
+    try:
+        loop.run_until_complete(main(env))
+    except (KeyboardInterrupt, ExceptionGroup, TkAppClosed):
+        sys.exit(0)
