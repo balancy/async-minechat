@@ -1,6 +1,4 @@
-import argparse
 import asyncio
-from dataclasses import dataclass, field
 from datetime import datetime
 import json
 import logging
@@ -20,11 +18,9 @@ from gui import (
     SendingConnectionState,
     TkAppClosed,
 )
-from work_with_files import (
-    get_token_from_file,
-    save_history_to_file,
-    upload_history_from_file,
-)
+from helpers.handle_arguments import initalize_arguments
+from helpers.handle_files import save_history_to_file, upload_history_from_file
+from helpers.classes import InvalidToken, Queues, ReconnectsCount
 
 
 DOWNTIME = 60
@@ -32,62 +28,27 @@ MAX_RECONNECTS_AMOUNT = 3
 TIMEOUT_LIMIT = 3
 
 
-@dataclass
-class Queues:
-    messages_queue: asyncio.queues.Queue = field(default=asyncio.Queue())
-    saving_queue: asyncio.queues.Queue = field(default=asyncio.Queue())
-    sending_queue: asyncio.queues.Queue = field(default=asyncio.Queue())
-    status_queue: asyncio.queues.Queue = field(default=asyncio.Queue())
-    watchdog_queue: asyncio.queues.Queue = field(default=asyncio.Queue())
-
-
-class InvalidToken(Exception):
-    pass
-
-
-class ReconnectsCount:
-    def __init__(self, max_reconnects, downtime):
-        self.count = 0
-        self.max_reconnects = max_reconnects
-        self.downtime = downtime
-
-    def reset(self):
-        self.count = 0
-
-    def increment(self):
-        self.count += 1
-
-    def overpassed_max_reconnects_amount(self):
-        return self.count >= self.max_reconnects
-
-    def get_idle_time(self):
-        return (self.count - self.max_reconnects) * self.downtime
-
-
 async def authenticate_user(connection, auth_token, watchdog_queue):
     reader, writer = connection
 
-    received_message = await reader.readline()
+    await reader.readline()
     watchdog_queue.put_nowait('Connection is alive. Prompt before auth')
 
     writer.write(f'{auth_token}\n'.encode())
     await writer.drain()
 
-    received_message = await reader.readline()
+    received_message = (await reader.readline()).decode()
 
-    is_token_valid = json.loads(received_message.decode().rstrip()) is not None
+    is_token_valid = json.loads(received_message.rstrip()) is not None
 
     if not is_token_valid:
-        messagebox.showinfo(
-            'Invalid token', 'Check it, server didn\'t recognize it.'
-        )
         raise InvalidToken
 
     watchdog_queue.put_nowait('Connection is alive. Authorization done')
-    username_with_token = json.loads(received_message.decode())
-    username = username_with_token.get('nickname')
+    username = json.loads(received_message).get('nickname')
+    watchdog_queue.put_nowait(f'User \'{username}\' entered the chat.')
 
-    received_message = await reader.readline()
+    await reader.readline()
 
     return username
 
@@ -98,16 +59,8 @@ async def handle_connection(reading_connection, sending_connection, queues):
     while True:
         try:
             async with create_task_group() as tg:
-                tg.start_soon(
-                    read_messages,
-                    reading_connection,
-                    queues,
-                )
-                tg.start_soon(
-                    send_messages,
-                    sending_connection,
-                    queues,
-                )
+                tg.start_soon(read_messages, reading_connection, queues)
+                tg.start_soon(send_messages, sending_connection, queues)
                 tg.start_soon(
                     watch_for_connection,
                     queues.watchdog_queue,
@@ -115,8 +68,8 @@ async def handle_connection(reading_connection, sending_connection, queues):
                 )
         except ConnectionError:
             reconnects_count.increment()
-            queues.status_queue.put_nowait(ReadingConnectionState.CLOSED)
-            queues.status_queue.put_nowait(SendingConnectionState.CLOSED)
+            for con_state in [ReadingConnectionState, SendingConnectionState]:
+                queues.status_queue.put_nowait(con_state.CLOSED)
 
             if reconnects_count.overpassed_max_reconnects_amount():
                 tg.cancel_scope.cancel()
@@ -127,56 +80,14 @@ async def handle_connection(reading_connection, sending_connection, queues):
                 sleep(time_to_sleep)
 
 
-async def initalize_arguments(env):
-    if not (token := await get_token_from_file()):
-        token = env.str('TOKEN', 'random_token')
-
-    parser = argparse.ArgumentParser(
-        description='Define optional arguments like host, port, history file.'
-    )
-    parser.add_argument(
-        '--host',
-        type=str,
-        default=env.str('HOST', 'minechat.dvmn.org'),
-        help='Chat host',
-    )
-    parser.add_argument(
-        '--rport',
-        type=int,
-        default=env.int('READING_PORT', 5000),
-        help='Chat port to read messages from',
-    )
-    parser.add_argument(
-        '--wport',
-        type=int,
-        default=env.int('WRITING_PORT', 5050),
-        help='Chat port to send messages to',
-    )
-    parser.add_argument(
-        '--token',
-        type=str,
-        default=token,
-        help='Token to authenticate the user',
-    )
-    parser.add_argument(
-        '--history',
-        type=str,
-        default=env.str('HISTORY', 'minechat.history'),
-        help='The file to save chat history to',
-    )
-    args = parser.parse_args()
-
-    return args
-
-
 async def main(env):
     args = await initalize_arguments(env)
-    queues = Queues()
+    queues = Queues(*[asyncio.Queue() for _ in range(5)])
 
     await upload_history_from_file(args.history, queues.messages_queue)
 
-    queues.status_queue.put_nowait(ReadingConnectionState.INITIATED)
-    queues.status_queue.put_nowait(SendingConnectionState.INITIATED)
+    for con_state in [ReadingConnectionState, SendingConnectionState]:
+        queues.status_queue.put_nowait(con_state.INITIATED)
 
     try:
         reading_connection = await asyncio.open_connection(
@@ -196,6 +107,9 @@ async def main(env):
         )
         queues.status_queue.put_nowait(NicknameReceived(username))
     except InvalidToken:
+        messagebox.showinfo(
+            'Invalid token', 'Invalid token. Server didn\'t recognize it.'
+        )
         sys.exit(1)
 
     async with create_task_group() as tg:

@@ -46,7 +46,7 @@ async def update_tk(root_frame, interval=1 / 120):
             root_frame.update()
         except tkinter.TclError:
             # if application has been destroyed/closed
-            sys.exit(0)
+            raise TkAppClosed()
         await asyncio.sleep(interval)
 
 
@@ -146,6 +146,4 @@ async def draw(messages_queue, sending_queue, status_updates_queue):
         tg.start_soon(
             update_conversation_history, conversation_panel, messages_queue
         )
-        tg.start_soon(
-            update_status_panel, status_labels, status_updates_queue
-        )
+        tg.start_soon(update_status_panel, status_labels, status_updates_queue)

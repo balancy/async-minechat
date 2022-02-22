@@ -23,6 +23,11 @@ async def save_history_to_file(filepath, queue):
             await outfile.write(f'{message}\n')
 
 
+async def save_token_to_file(username_with_token):
+    async with AIOFile(TOKEN_FILE, 'w') as outfile:
+        await outfile.write(json.dumps(username_with_token))
+
+
 async def upload_history_from_file(filepath, queue):
     async with AIOFile(filepath, 'r') as file:
         contents = await file.read()
