@@ -6,7 +6,7 @@ import tkinter
 from anyio import create_task_group
 from environs import Env
 
-from gui import TkAppClosed, update_tk
+from helpers.gui import TkAppClosed, update_tk
 from helpers.handle_arguments import initalize_arguments
 from helpers.handle_files import save_token_to_file
 

@@ -1,6 +1,8 @@
 # Async chat interaction
 
-The app represents a client which connects to Minechat (chat dedicated to Minecraft game) and could interact with it. A user via client could authenticate himself if he's already registered or register a new account, and send messages to the chat.
+![](minechat.png)
+
+The app represents a client with GUI which connects to Minechat (chat dedicated to Minecraft game) and could read and interact with it. A user via client could read the chat, authenticate himself if he's already registered or register a new account, and send messages to the chat.
 
 ## Install
 
@@ -28,9 +30,9 @@ python -m venv .venv
 
 There are two scripts:
 
-- `listen-to-chat.py` - for listening to the chat.
+- `client.py` - to read the chat, save history to the file and to write to the chat if user is already registered.
 
-- `interact-with-chat.py` - for interacting with the chat.
+- `register.py` - to register a new account.
 
 ### Environmant variables
 
@@ -41,38 +43,34 @@ nano .env
 ```
 
 - `HOST` - hostname of the chat. By default it's `minechat.dvmn.org`.
-- `LISTEN_PORT` - port of the chat to listen to messages from. By default it's `5000`.
-- `WRITE_PORT` - port of the chat to write messages to. By default it's `5050`.
+- `READING_PORT` - port of the chat to read messages from. By default it's `5000`.
+- `WRITING_PORT` - port of the chat to write messages to. By default it's `5050`.
 - `HISTORY` - name of the file to save chat history. By default it's `minechat.history`.
 - `TOKEN` - authentication token to join the chat.
-- `USERNAME` - name of the user you want to be registered with. By default it's `funky`.
 
 ### Command line arguments
 
 You could also provide command line arguments for both scripts.
 
-Command example for `listen-to-chat.py`:
+Command example for `client.py`:
 
 ```bash
-python listen-to-chat.py --host <hostname> --port <port> --history <history-file>
+python client.py --host <hostname> --rport <rport> --history <history-file>
 ```
 
 - `hostname` - hostname of the chat. By default it's `minechat.dvmn.org`. This argument is optional.
-- `port` - port of the chat to listen to messages from. By default it's `5000`. This argument is optional.
+- `rport` - port of the chat to read messages from. By default it's `5000`. This argument is optional.
 - `history-file` - name of the file to save chat history. By default it's `minechat.history`. This argument is optional.
 
-Command example for `interact-with-chat.py`:
+Command example for `register.py`:
 
 ```bash
-python interact-with-chat.py --host <hostname> --port <port> --token <token> --username <username> --message <message>
+python register.py --host <hostname> --wport <wport>
 ```
 
-- `message` - message to send to the chat. This argument is **required**.
 - `hostname` - hostname of the chat. By default it's `minechat.dvmn.org`. This argument is optional.
-- `port` - port of the chat to write messages to. By default it's `5050`. This argument is optional.
-- `token` - authentication token to join the chat. This argument is optional.
-- `username` - name of the user you want to be registered with. By default it's `funky`.
+- `wport` - port of the chat to write messages to. By default it's `5050`. This argument is optional.
 
 Normal use flow of scripts:
-1. You run `listen-to-chat.py` to read the chat.
-2. When you need to send message, you run `interact-with-chat.py`, providing a message and some optional arguments if needed.
+1. You run `register.py` if you are not registered yet. In the dialogbox you provide your preferred username, and it's done.
+2. You run `client.py` if you want to read the chat or write messages there.

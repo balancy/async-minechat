@@ -11,7 +11,7 @@ from async_timeout import timeout
 from environs import Env
 from tkinter import messagebox
 
-from gui import (
+from helpers.gui import (
     draw,
     NicknameReceived,
     ReadingConnectionState,
