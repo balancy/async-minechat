@@ -90,34 +90,26 @@ async def main(env):
         queues.status_queue.put_nowait(con_state.INITIATED)
 
     try:
-        reading_connection = await asyncio.open_connection(
-            args.host, args.rport
+        read_connection, send_connection = await receive_connections_objects(
+            args.host, args.rport, args.wport
         )
     except gaierror:
-        logger.debug(f'Could not resolve {args.host}')
-        sys.exit(1)
-
-    sending_connection = await asyncio.open_connection(args.host, args.wport)
+        sys.exit(f'Could not resolve {args.host}')
 
     try:
         username = await authenticate_user(
-            sending_connection,
+            send_connection,
             args.token,
             queues.watchdog_queue,
         )
         queues.status_queue.put_nowait(NicknameReceived(username))
     except InvalidToken:
-        messagebox.showinfo(
-            'Invalid token', 'Invalid token. Server didn\'t recognize it.'
-        )
-        sys.exit(1)
+        messagebox.showinfo('Invalid token', 'Invalid token. Check it.')
+        sys.exit('Invalid token. Check it.')
 
     async with create_task_group() as tg:
         tg.start_soon(
-            handle_connection,
-            reading_connection,
-            sending_connection,
-            queues,
+            handle_connection, read_connection, send_connection, queues
         )
         tg.start_soon(save_history_to_file, args.history, queues.saving_queue)
         tg.start_soon(
@@ -144,6 +136,13 @@ async def read_messages(connection, queues):
 
         for queue in [queues.messages_queue, queues.saving_queue]:
             queue.put_nowait(formatted_message)
+
+
+async def receive_connections_objects(host, rport, wport):
+    reading_connection = await asyncio.open_connection(host, rport)
+    sending_connection = await asyncio.open_connection(host, wport)
+
+    return reading_connection, sending_connection
 
 
 async def send_messages(connection, queues):
